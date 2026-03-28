@@ -77,7 +77,7 @@ this class contains basic information of a xyz file.
 """
 
     def __init__(self, ifilename: str|None=None):
-        if ifilename is not None:
+        if ifilename is not None and ifilename:
             self.read(ifilename)
 
     def read(self, ifilename: str):
@@ -137,6 +137,8 @@ this class contains basic information of a xyz file.
 
     def detect_point_group(self, tol: np.double=1.E-4) -> str:
         # quick return
+        if not hasattr(self, "natoms") or not self.natoms:
+            raise AttributeError("You should load a molecule first.")
         if self.natoms == 1:
             # spherical
             return "Kh"
