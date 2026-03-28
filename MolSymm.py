@@ -84,8 +84,17 @@ this class contains basic information of a xyz file.
         suffix = os.path.splitext(ifilename)[1]
         if suffix == ".xyz":
             self.read_xyz(ifilename)
+        elif suffix == ".gjf":
+            self.read_gjf(ifilename)
         else:
             raise ValueError("Cannot understand file name suffix.")
+
+    def resize(self):
+        # note: this method does not change natoms.
+        self.elements = np.empty((self.natoms,), dtype=np.dtype("<U2"))
+        self.coordinates = np.empty((self.natoms, ncoords), dtype=np.double)
+        self.atomic_numbers = np.empty((self.natoms,), dtype=int)
+        self.atomic_weights = np.empty((self.natoms,), dtype=np.double)
 
     def read_xyz(self, ifilename: str):
         if os.path.splitext(ifilename)[1] != ".xyz":
@@ -93,10 +102,32 @@ this class contains basic information of a xyz file.
         with open(ifilename) as ifile:
             self.natoms = int(ifile.readline())
             comment = ifile.readline()
-            self.elements = np.zeros((self.natoms,), dtype=np.dtype("<U2"))
-            self.coordinates = np.zeros((self.natoms, ncoords), dtype=np.double)
-            self.atomic_numbers = np.zeros((self.natoms,), dtype=int)
-            self.atomic_weights = np.zeros((self.natoms,), dtype=np.double)
+            self.resize()
+            for iatom in range(self.natoms):
+                line = ifile.readline().split()
+                self.elements[iatom] = line[0]
+                self.atomic_numbers[iatom] = elements_dict[self.elements[iatom]]
+                self.atomic_weights[iatom] = elements_average_weight[self.atomic_numbers[iatom]]
+                self.coordinates[iatom, :] = np.array(line[1:4], dtype=np.double)
+
+    def read_gjf(self, ifilename: str):
+        if os.path.splitext(ifilename)[1] != ".gjf":
+            raise ValueError("The suffix of a .gjf file must be \".gjf\".")
+        with open(ifilename, "rb") as ifile:
+            for line in ifile:
+                if not line.strip(): break
+            for line in ifile:
+                if not line.strip(): break
+            line = ifile.readline()
+            charge, multiplicity = list(map(int, line.split()))
+            file_pos = ifile.tell()
+            self.natoms = 0
+            while True:
+                line = ifile.readline()
+                if not line.strip(): break
+                self.natoms += 1
+            ifile.seek(file_pos)
+            self.resize()
             for iatom in range(self.natoms):
                 line = ifile.readline().split()
                 self.elements[iatom] = line[0]
