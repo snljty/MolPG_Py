@@ -116,8 +116,12 @@ this class contains basic information of a xyz file.
         with open(ifilename, "rb") as ifile:
             for line in ifile:
                 if not line.strip(): break
+            else:
+                raise IOError("Cannot read title.")
             for line in ifile:
                 if not line.strip(): break
+            else:
+                raise IOError("Cannot read charge and multiplicity.")
             line = ifile.readline()
             charge, multiplicity = list(map(int, line.split()))
             file_pos = ifile.tell()
@@ -134,6 +138,8 @@ this class contains basic information of a xyz file.
                 self.atomic_numbers[iatom] = elements_dict[self.elements[iatom]]
                 self.atomic_weights[iatom] = elements_average_weight[self.atomic_numbers[iatom]]
                 self.coordinates[iatom, :] = np.array(line[1:4], dtype=np.double)
+            line = ifile.readline()
+            if not line: raise IOError("Cannot read final blank line.")
 
     def detect_point_group(self, tol: np.double=1.E-4) -> str:
         # quick return
@@ -187,10 +193,46 @@ this class contains basic information of a xyz file.
         # print([[_ + 1 for _ in SEA_group] for SEA_group in SEAs])
 
         # print(moments_of_inertia)
+        coords_operated = coords_centered.copy()
+
+        def is_sym_okay() -> bool:
+            touched.fill(False)
+            sym_okay = True
+            for SEA_group in SEAs:
+                for iatom in SEA_group:
+                    for jatom in SEA_group:
+                        if np.all(np.abs(coords_operated[iatom] - coords_centered[jatom]) <= tol):
+                            touched[iatom] = True
+                            break
+                    else:
+                        sym_okay = False
+                if not sym_okay: break
+            else:
+                sym_okay = True
+            return sym_okay
 
         if moments_of_inertia[0] <= tol and moments_of_inertia[2] - moments_of_inertia[1] <= tol:
             # linear, I_A = 0, I_B = I_C
-            print("linear")
+            # print("linear")
+            # only need to check symmetry center
+
+            # coords_operated[:, :] = - coords_centered
+            # return "Dinfh" if is_sym_okay() else "Cinfv"
+
+            for SEA_group in SEAs:
+                if len(SEA_group) == 2:
+                    if np.any(np.abs(coords_centered[SEA_group[0]] + coords_centered[SEA_group[1]]) / 2. > tol):
+                        sym_okay = False
+                        break
+                elif len(SEA_group) == 1:
+                    if np.any(np.abs(coords_centered[SEA_group[0]]) > tol):
+                        sym_okay = False
+                        break
+                else:
+                    raise ValueError("This should never happen.")
+            else:
+                sym_okay = True
+            return "Dinfh" if sym_okay else "Cinfv"
         elif moments_of_inertia[1] - moments_of_inertia[0] <= tol and moments_of_inertia[2] - moments_of_inertia[1] <= tol:
             # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherial-like"
             print("spherial-like")
