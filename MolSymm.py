@@ -15,7 +15,8 @@ import inspect, IPython
 # IPython.embed(header=f"Debug: at line {inspect.currentframe().f_lineno:d} of file {os.path.split(__file__)[-1]:s}:")
 # from functools import reduce
 
-ncoords = 3
+ncoords: int = 3
+coord_x, coord_y, coord_z = range(ncoords)
 
 np.set_printoptions(precision=7, suppress=True, formatter={"float": "{: 0.7f}".format})
 
@@ -162,7 +163,7 @@ this class contains basic information of a xyz file.
                 np.outer(coords_centered[iatom], coords_centered[iatom])) for iatom in range(self.natoms))
 
         moments_of_inertia, principal_axes = np.linalg.eigh(moments_of_inertia_tensor)
-        # moments_of_inertia = sorted(np.linalg.eigvals(moments_of_inertia_tensor)) # do not use this, it may return complex numbers
+        coords_centered @= principal_axes # rotate principal axes to x y z
 
         # detect SEA
         atomic_numbers_to_compare = np.tile(self.atomic_numbers, (self.natoms, 1))
@@ -215,17 +216,20 @@ this class contains basic information of a xyz file.
             # linear, I_A = 0, I_B = I_C
             # print("linear")
             # only need to check symmetry center
+            # Cinfv or Dinfh
+
+            # the molecule is on axis x
 
             # coords_operated[:, :] = - coords_centered
             # return "Dinfh" if is_sym_okay() else "Cinfv"
 
             for SEA_group in SEAs:
                 if len(SEA_group) == 2:
-                    if np.any(np.abs(coords_centered[SEA_group[0]] + coords_centered[SEA_group[1]]) / 2. > tol):
+                    if np.abs(coords_centered[SEA_group[0], coord_x] + coords_centered[SEA_group[1], coord_x]) / 2. > tol:
                         sym_okay = False
                         break
                 elif len(SEA_group) == 1:
-                    if np.any(np.abs(coords_centered[SEA_group[0]]) > tol):
+                    if np.abs(coords_centered[SEA_group[0], coord_x]) > tol:
                         sym_okay = False
                         break
                 else:
