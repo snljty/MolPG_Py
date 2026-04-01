@@ -16,6 +16,9 @@ import inspect, IPython
 # from functools import reduce
 
 ncoords: int = 3
+coord_x: int
+coord_y: int
+coord_z: int
 coord_x, coord_y, coord_z = range(ncoords)
 
 np.set_printoptions(precision=7, suppress=True, formatter={"float": "{: 0.7f}".format})
@@ -163,7 +166,9 @@ this class contains basic information of a xyz file.
                 np.outer(coords_centered[iatom], coords_centered[iatom])) for iatom in range(self.natoms))
 
         moments_of_inertia, principal_axes = np.linalg.eigh(moments_of_inertia_tensor)
+        if np.linalg.det(principal_axes) < 0.: principal_axes[:, 0] = - principal_axes[:, 0]
         coords_centered @= principal_axes # rotate principal axes to x y z
+        print(moments_of_inertia)
 
         # detect SEA
         atomic_numbers_to_compare = np.tile(self.atomic_numbers, (self.natoms, 1))
@@ -212,7 +217,8 @@ this class contains basic information of a xyz file.
                 sym_okay = True
             return sym_okay
 
-        if moments_of_inertia[0] <= tol and moments_of_inertia[2] - moments_of_inertia[1] <= tol:
+        inertia_tol = tol * 1.E3
+        if moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # linear, I_A = 0, I_B = I_C
             # print("linear")
             # only need to check symmetry center
@@ -237,15 +243,86 @@ this class contains basic information of a xyz file.
             else:
                 sym_okay = True
             return "Dinfh" if sym_okay else "Cinfv"
-        elif moments_of_inertia[1] - moments_of_inertia[0] <= tol and moments_of_inertia[2] - moments_of_inertia[1] <= tol:
+        elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherial-like"
             print("spherial-like")
-        elif moments_of_inertia[1] - moments_of_inertia[0] <= tol or moments_of_inertia[2] - moments_of_inertia[1] <= tol:
+        elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol or moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # symmetric, I_A = I_B \ne I_C or I_A \ne I_B = I_C
             print("symmetric")
         else:
             # asymmetric, I_A \ne I_B \ne I_C
             print("asymmetric")
+            coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+            coords_operated[:, coord_y] = - coords_centered[:, coord_y]
+            coords_operated[:, coord_z] = - coords_centered[:, coord_z]
+            has_x_C2: bool = is_sym_okay()
+            coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            coords_operated[:, coord_y] =   coords_centered[:, coord_y]
+            has_y_C2: bool = is_sym_okay()
+            coords_operated[:, coord_y] = - coords_centered[:, coord_y]
+            coords_operated[:, coord_z] =   coords_centered[:, coord_z]
+            has_z_C2: bool = is_sym_okay()
+
+            # there can only be 0, 1 or 3 C2 in this situation
+            if has_x_C2 and has_y_C2 and has_z_C2:
+                # D2, D2h, D2d
+                coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+                has_zOx_mirror: bool = is_sym_okay()
+                coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+                coords_operated[:, coord_y] =   coords_centered[:, coord_y]
+                has_yOz_mirror: bool = is_sym_okay()
+                coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+                coords_operated[:, coord_z] = - coords_centered[:, coord_z]
+                has_xOy_mirror: bool = is_sym_okay()
+                return "D2h" if has_xOy_mirror and has_yOz_mirror and has_zOx_mirror else "D2"
+            # C2, C2h, C2v, C1, Ci, Cs
+            # rotate the C2 axis to x axis
+            if has_z_C2:
+                swp = - coords_centered[:, coord_x]
+                coords_centered[:, coord_x] = coords_centered[:, coord_z]
+                coords_centered[:, coord_z] = swp
+                has_z_C2 = False
+                has_x_C2 = True
+                del swp
+            elif has_y_C2:
+                swp = - coords_centered[:, coord_y]
+                coords_centered[:, coord_y] = coords_centered[:, coord_x]
+                coords_centered[:, coord_x] = swp
+                has_y_C2 = False
+                has_x_C2 = True
+                del swp
+
+            if has_x_C2:
+                # C2, C2h, C2v
+                coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+                coords_operated[:, coord_y] =   coords_centered[:, coord_y]
+                coords_operated[:, coord_z] =   coords_centered[:, coord_z]
+                has_yOz_mirror = is_sym_okay()
+                if has_yOz_mirror: return "C2h"
+                # C2, C2v
+                coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+                coords_operated[:, coord_z] = - coords_centered[:, coord_z]
+                has_xOy_mirror = is_sym_okay()
+                return "C2v" if has_xOy_mirror else "C2"
+
+            # C1, Ci, Cs
+            coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+            coords_operated[:, coord_y] = - coords_centered[:, coord_y]
+            coords_operated[:, coord_z] =   coords_centered[:, coord_z]
+            has_zOx_mirror: bool = is_sym_okay()
+            coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            coords_operated[:, coord_y] =   coords_centered[:, coord_y]
+            has_yOz_mirror: bool = is_sym_okay()
+            coords_operated[:, coord_x] =   coords_centered[:, coord_x]
+            coords_operated[:, coord_z] = - coords_centered[:, coord_z]
+            has_xOy_mirror: bool = is_sym_okay()
+            if has_xOy_mirror or has_yOz_mirror or has_zOx_mirror: return "Cs"
+
+            # C1, Ci
+            coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            coords_operated[:, coord_y] = - coords_centered[:, coord_y]
+            has_sym_center: bool = is_sym_okay()
+            return "Ci" if has_sym_center else "C1"
 
         return "undetected"
 
