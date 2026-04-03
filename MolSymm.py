@@ -343,8 +343,7 @@ this class contains basic information of a xyz file.
                 for iatom in SEA_group:
                     for jatom in SEA_group:
                         if iatom == jatom: continue
-                        axis_point = np.array([(coords_centered[iatom, coord_y] + coords_centered[jatom, coord_y]) / 2., 
-                                               (coords_centered[iatom, coord_z] + coords_centered[jatom, coord_z]) / 2.], dtype=np.double)
+                        axis_point = (coords_centered[iatom, coord_y:] + coords_centered[jatom, coord_y:]) / 2.
                         axis_point_norm = np.linalg.norm(axis_point)
                         if axis_point_norm  <= tol: continue
                         axis_point /= axis_point_norm
@@ -471,6 +470,4 @@ if __name__ == "__main__":
     molname = sys.argv[1]
     mol = Molecule(molname)
     print(mol.detect_point_group())
-    mol.write_xyz("new.xyz")
-    mol.write("new.gjf")
 
