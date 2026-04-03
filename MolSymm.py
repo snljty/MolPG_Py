@@ -93,12 +93,22 @@ this class contains basic information of a xyz file.
         else:
             raise ValueError("Cannot understand file name suffix.")
 
+    def write(self, ofilename: str):
+        suffix = os.path.splitext(ofilename)[1]
+        if suffix == ".xyz":
+            self.write_xyz(ofilename)
+        elif suffix == ".gjf":
+            self.write_gjf(ofilename)
+        else:
+            raise ValueError("Cannot understand file name suffix.")
+
     def resize(self):
         # note: this method does not change natoms.
         self.elements = np.empty((self.natoms,), dtype=np.dtype("<U2"))
         self.coordinates = np.empty((self.natoms, ncoords), dtype=np.double)
         self.atomic_numbers = np.empty((self.natoms,), dtype=int)
         self.atomic_weights = np.empty((self.natoms,), dtype=np.double)
+        self.new_coordinates = np.zeros((self.natoms, ncoords), dtype=np.double)
 
     def read_xyz(self, ifilename: str):
         if os.path.splitext(ifilename)[1] != ".xyz":
@@ -144,6 +154,30 @@ this class contains basic information of a xyz file.
                 self.coordinates[iatom, :] = np.array(line[1:4], dtype=np.double)
             line = ifile.readline()
             if not line: raise IOError("Cannot read final blank line.")
+
+    def write_xyz(self, ofilename: str):
+        if os.path.splitext(ofilename)[1] != ".xyz":
+            raise ValueError("The suffix of a .xyz file must be \".xyz\".")
+        with open(ofilename, "w") as ofile:
+            print("{:5d}".format(self.natoms), file=ofile)
+            print(os.path.splitext(ofilename)[0], file=ofile)
+            for iatom in range(self.natoms):
+                print(f" {self.elements[iatom]:<2s}" + ("    {:13.8f}" * 3).format(*self.coordinates[iatom]), file=ofile)
+
+    def write_gjf(self, ofilename: str):
+        if os.path.splitext(ofilename)[1] != ".gjf":
+            raise ValueError("The suffix of a .gjf file must be \".gjf\".")
+        with open(ofilename, "w") as ofile:
+            print(f"%chk={os.path.splitext(ofilename)[0]:s}.chk", file=ofile)
+            print("#P B3LYP/6-31G* EmpiricalDispersion=GD3BJ 5D", file=ofile)
+            print("\n{:s}\n".format(os.path.splitext(ofilename)[0]), file=ofile)
+            print(" {:d} {:d}".format(0, 1), file=ofile)
+            for iatom in range(self.natoms):
+                print(f" {self.elements[iatom]:<2s}" + ("    {:13.8f}" * 3).format(*self.coordinates[iatom]), file=ofile)
+            print(file=ofile)
+
+    def use_new_coordinates(self):
+        self.coordinates[:, :] = self.new_coordinates[:, :]
 
     def detect_point_group(self, tol: np.double=1.E-4) -> str:
         # quick return
@@ -283,6 +317,65 @@ this class contains basic information of a xyz file.
                 for max_Cn_try_current in max_Cn_try_list:
                     if max_Cn_try_current > max_Cn_try: max_Cn_try = max_Cn_try_current
             
+            def rotate_around_x_by_n(n: int):
+                angle = 2. * np.pi / np.double(n)
+                cos_theta = np.cos(angle)
+                sin_theta = np.sin(angle)
+                rot_mat = np.array([[cos_theta, - sin_theta], [sin_theta, cos_theta]], dtype=np.double)
+                coords_operated[:, coord_x] = coords_centered[:, coord_x]
+                coords_operated[:, coord_y:] = coords_centered[:, coord_y:] @ rot_mat.T
+
+            # find the major Cn
+            for major_Cn in range(max_Cn_try, 1, -1):
+                rotate_around_x_by_n(major_Cn)
+                if is_sym_okay(): break
+            else:
+                raise RuntimeError("This should never happen.");
+
+            # find available C2
+            found_minor_C2: bool = False
+            axis_point: np.ndarray
+            axis_point_norm: np.double
+            # first, check centers of two SEAs
+            coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            for SEA_group in SEAs:
+                if len(SEA_group) < 2: continue
+                for iatom in SEA_group:
+                    for jatom in SEA_group:
+                        if iatom == jatom: continue
+                        axis_point = np.array([(coords_centered[iatom, coord_y] + coords_centered[jatom, coord_y]) / 2., 
+                                               (coords_centered[iatom, coord_z] + coords_centered[jatom, coord_z]) / 2.], dtype=np.double)
+                        axis_point_norm = np.linalg.norm(axis_point)
+                        if axis_point_norm  <= tol: continue
+                        axis_point /= axis_point_norm
+                        # test a C2 through origin point and center of iatom and jatom
+                        projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
+                        coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
+                        if is_sym_okay():
+                            found_minor_C2 = True
+                            break
+                    if found_minor_C2: break
+                if found_minor_C2: break
+
+            if not found_minor_C2:
+                # second, check C2 through each atom
+                for iatom in range(self.natoms):
+                    axis_point_norm = np.linalg.norm(coords_centered[iatom, coord_y:])
+                    if axis_point_norm <= tol: continue
+                    axis_point = coords_centered[iatom, coord_y:] / axis_point_norm
+                    # test a C2 through origin point and iatom
+                    projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
+                    coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
+                    if is_sym_okay():
+                        found_minor_C2 = True
+                        break
+
+            if found_minor_C2:
+                # rotate the found C2 to y axis
+                rot_mat = np.array([[axis_point[0], axis_point[1]], [- axis_point[1], axis_point[0]]])
+                coords_centered[:, coord_y:] @= rot_mat.T
+
+            print(found_minor_C2)
 
         else:
             # asymmetric, I_A \ne I_B \ne I_C
@@ -378,4 +471,6 @@ if __name__ == "__main__":
     molname = sys.argv[1]
     mol = Molecule(molname)
     print(mol.detect_point_group())
+    mol.write_xyz("new.xyz")
+    mol.write("new.gjf")
 
