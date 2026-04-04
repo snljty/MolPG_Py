@@ -185,9 +185,14 @@ this class contains basic information of a xyz file.
             raise AttributeError("You should load a molecule first.")
         if self.natoms == 1:
             # spherical
+            self.new_coordinates[:, :] = 0.
             return "Kh"
         elif self.natoms == 2:
             # 2-atoms linear, C_\mathrm{\infty v} or D_\mathrm{\infty h}
+            self.new_coordinates[:, :] = 0.
+            bond_length: np.double = np.linalg.norm(self.coordinates[1] - self.coordinates[0])
+            self.new_coordinates[0, coord_x] = - bond_length / 2.
+            self.new_coordinates[1, coord_x] = bond_length / 2.
             return "Dinfh" if self.elements[0] == self.elements[1] else "Cinfv"
         coords_centered = self.coordinates - self.coordinates.mean(axis=0)
 
