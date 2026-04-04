@@ -202,7 +202,7 @@ this class contains basic information of a xyz file.
         moments_of_inertia, principal_axes = np.linalg.eigh(moments_of_inertia_tensor)
         if np.linalg.det(principal_axes) < 0.: principal_axes[:, 0] = - principal_axes[:, 0]
         coords_centered @= principal_axes # rotate principal axes to x y z
-        print(moments_of_inertia)
+        self.new_coordinates[:, :] = coords_centered[:, :]
 
         # detect SEA
         atomic_numbers_to_compare = np.tile(self.atomic_numbers, (self.natoms, 1))
@@ -273,7 +273,7 @@ this class contains basic information of a xyz file.
                         sym_okay = False
                         break
                 else:
-                    raise ValueError("This should never happen.")
+                    raise RuntimeError("This should never happen.")
             else:
                 sym_okay = True
             return "Dinfh" if sym_okay else "Cinfv"
@@ -285,8 +285,7 @@ this class contains basic information of a xyz file.
 
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol or moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # symmetric, I_A = I_B \ne I_C or I_A \ne I_B = I_C
-            # Dnd for n>= 2, (Cn, Cnh, Cnv, Dn, Dnh) for n > 2, Cni for (n > 1 and n is odd, a.k.a. S(2n)) and Sn for 4 | n
-            print("symmetric")
+            # Dnd for n >= 2, (Cn, Cnh, Cnv, Dn, Dnh) for n > 2, Cni for (n > 1 and n is odd, a.k.a. S(2n)) and Sn for 4 | n
 
             # rotate the principal axis corresponding to the unequivalent moment of inertia to x axis
             if moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol:
@@ -295,7 +294,7 @@ this class contains basic information of a xyz file.
                 coords_centered[:, coord_z] = swp
                 del swp
 
-            # detect the main axis n>2
+            # detect the main axis n > 2
             # first find the maximum possible Cn axis
             max_Cn_try: int = 2
             for SEA_group in SEAs:
@@ -336,8 +335,8 @@ this class contains basic information of a xyz file.
             has_minor_C2: bool = False
             axis_point: np.ndarray
             axis_point_norm: np.double
-            # first, check centers of two SEAs
             coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            # first, check centers of two SEAs
             for SEA_group in SEAs:
                 if len(SEA_group) < 2: continue
                 for iatom in SEA_group:
@@ -373,6 +372,7 @@ this class contains basic information of a xyz file.
                 # rotate the found C2 to y axis
                 rot_mat = np.array([[axis_point[0], axis_point[1]], [- axis_point[1], axis_point[0]]])
                 coords_centered[:, coord_y:] @= rot_mat.T
+                self.new_coordinates[:, :] = coords_centered[:, :]
 
             # find sigma_h
             coords_operated[:, coord_x] = - coords_centered[:, coord_x]
@@ -380,7 +380,7 @@ this class contains basic information of a xyz file.
             has_sigma_h: bool = is_sym_okay()
 
             if has_minor_C2:
-                # Dn (n>2), Dnh (n>2), Dnd (n>=2)
+                # Dn (n > 2), Dnh (n > 2), Dnd (n >= 2)
                 if major_Cn == 2: return "D2d"
                 if has_sigma_h: return "D{:d}h".format(major_Cn)
                 # Dn, Dnd for n > 2
@@ -392,7 +392,82 @@ this class contains basic information of a xyz file.
                 coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
                 has_sigma_d: bool = is_sym_okay()
                 return "D{:d}d".format(major_Cn) if has_sigma_d else "D{:d}".format(major_Cn)
-            # (Cn, Cnv, Cnh) for n>3, Cni for odd i > 1, S4n for positive n
+
+            # (Cn, Cnv, Cnh) for n > 3, Cni for odd i > 1, S4n for positive n
+            coords_operated = - coords_centered
+            has_sym_center: bool = is_sym_okay()
+            if has_sym_center: return "C{:d}i".format(major_Cn) if major_Cn % 2 else "C{:d}h".format(major_Cn)
+            # Cnh for even n has been excluded now, odd n is still remained
+            if has_sigma_h:
+                if major_Cn % 2 == 0: raise RuntimeError("This should never happen.")
+                return "C{:d}h".format(major_Cn)
+
+            # (Cn, Cnv) for n > 3, S4n for positive n
+            # if there is S4n, there must be C2n
+            has_Sn: bool = False
+            S_order: int
+            for half_S_order_try in range(major_Cn, 0, -1):
+                if major_Cn % half_S_order_try != 0: continue
+                S_order_try: int = half_S_order_try * 2
+                rotate_around_x_by_n(S_order_try)
+                coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+                if is_sym_okay():
+                    has_Sn = True
+                    S_order = S_order_try
+                    break
+            else:
+                has_Sn = False
+
+            if has_Sn:
+                if S_order % 4 != 0: raise RuntimeError("This should never happen.") # C{S_order/2}h
+                return "S{:d}".format(S_order)
+
+            # Cn or Cnv for n > 3
+            # find available sigma v
+            has_sigma_v: bool = False
+            mirror_point: np.ndarray
+            mirror_point_norm: np.double
+            coords_operated[:, coord_x] = coords_centered[:, coord_x]
+            # first, check centers of two SEAs
+            for SEA_group in SEAs:
+                if len(SEA_group) < 2: continue
+                for iatom in SEA_group:
+                    for jatom in SEA_group:
+                        if iatom >= jatom: continue
+                        mirror_point = (coords_centered[iatom, coord_y:] + coords_centered[jatom, coord_y:]) / 2.
+                        mirror_point_norm = np.linalg.norm(mirror_point)
+                        if mirror_point_norm  <= tol: continue
+                        mirror_point /= mirror_point_norm
+                        # test a C2 through origin point and center of iatom and jatom
+                        projection = np.outer(coords_centered[:, coord_y:] @ mirror_point, mirror_point)
+                        coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
+                        if is_sym_okay():
+                            has_sigma_v = True
+                            break
+                    if has_sigma_v: break
+                if has_sigma_v: break
+
+            if not has_sigma_v:
+                # second, check C2 through each atom
+                for iatom in range(self.natoms):
+                    mirror_point_norm = np.linalg.norm(coords_centered[iatom, coord_y:])
+                    if mirror_point_norm <= tol: continue
+                    mirror_point = coords_centered[iatom, coord_y:] / mirror_point_norm
+                    # test a C2 through origin point and iatom
+                    projection = np.outer(coords_centered[:, coord_y:] @ mirror_point, mirror_point)
+                    coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
+                    if is_sym_okay():
+                        has_sigma_v = True
+                        break
+
+            if has_sigma_v:
+                # rotate the found sigma_v to y axis
+                rot_mat = np.array([[mirror_point[0], mirror_point[1]], [- mirror_point[1], mirror_point[0]]])
+                coords_centered[:, coord_y:] @= rot_mat.T
+                self.new_coordinates[:, :] = coords_centered[:, :]
+                return "C{:d}v".format(major_Cn)
+            else:
+                return "C{:d}".format(major_Cn)
 
         else:
             # asymmetric, I_A \ne I_B \ne I_C
@@ -488,4 +563,6 @@ if __name__ == "__main__":
     molname = sys.argv[1]
     mol = Molecule(molname)
     print(mol.detect_point_group())
+    # mol.use_new_coordinates()
+    # mol.write_gjf("new.gjf")
 
