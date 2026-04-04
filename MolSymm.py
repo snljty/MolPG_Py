@@ -333,7 +333,7 @@ this class contains basic information of a xyz file.
                 raise RuntimeError("This should never happen.");
 
             # find available C2
-            found_minor_C2: bool = False
+            has_minor_C2: bool = False
             axis_point: np.ndarray
             axis_point_norm: np.double
             # first, check centers of two SEAs
@@ -342,39 +342,57 @@ this class contains basic information of a xyz file.
                 if len(SEA_group) < 2: continue
                 for iatom in SEA_group:
                     for jatom in SEA_group:
-                        if iatom == jatom: continue
+                        if iatom >= jatom: continue
                         axis_point = (coords_centered[iatom, coord_y:] + coords_centered[jatom, coord_y:]) / 2.
                         axis_point_norm = np.linalg.norm(axis_point)
                         if axis_point_norm  <= tol: continue
                         axis_point /= axis_point_norm
                         # test a C2 through origin point and center of iatom and jatom
-                        projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
+                        projection = np.outer(coords_centered[:, coord_y:] @ axis_point, axis_point)
                         coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
                         if is_sym_okay():
-                            found_minor_C2 = True
+                            has_minor_C2 = True
                             break
-                    if found_minor_C2: break
-                if found_minor_C2: break
+                    if has_minor_C2: break
+                if has_minor_C2: break
 
-            if not found_minor_C2:
+            if not has_minor_C2:
                 # second, check C2 through each atom
                 for iatom in range(self.natoms):
                     axis_point_norm = np.linalg.norm(coords_centered[iatom, coord_y:])
                     if axis_point_norm <= tol: continue
                     axis_point = coords_centered[iatom, coord_y:] / axis_point_norm
                     # test a C2 through origin point and iatom
-                    projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
+                    projection = np.outer(coords_centered[:, coord_y:] @ axis_point, axis_point)
                     coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
                     if is_sym_okay():
-                        found_minor_C2 = True
+                        has_minor_C2 = True
                         break
 
-            if found_minor_C2:
+            if has_minor_C2:
                 # rotate the found C2 to y axis
                 rot_mat = np.array([[axis_point[0], axis_point[1]], [- axis_point[1], axis_point[0]]])
                 coords_centered[:, coord_y:] @= rot_mat.T
 
-            print(found_minor_C2)
+            # find sigma_h
+            coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            coords_operated[:, coord_y:] = coords_centered[:, coord_y:]
+            has_sigma_h: bool = is_sym_okay()
+
+            if has_minor_C2:
+                # Dn (n>2), Dnh (n>2), Dnd (n>=2)
+                if major_Cn == 2: return "D2d"
+                if has_sigma_h: return "D{:d}h".format(major_Cn)
+                # Dn, Dnd for n > 2
+                # if exists sigma_d, it divides two minor C2. one minor C2 is already on axis y.
+                coords_operated[:, coord_x] = coords_centered[:, coord_x]
+                angle = np.pi / np.double(major_Cn) / 2.
+                axis_point = np.array([np.cos(angle), np.sin(angle)])
+                projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
+                coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
+                has_sigma_d: bool = is_sym_okay()
+                return "D{:d}d".format(major_Cn) if has_sigma_d else "D{:d}".format(major_Cn)
+            # (Cn, Cnv, Cnh) for n>3, Cni for odd i > 1, S4n for positive n
 
         else:
             # asymmetric, I_A \ne I_B \ne I_C
