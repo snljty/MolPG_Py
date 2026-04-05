@@ -399,33 +399,31 @@ this class contains basic information of a xyz file.
                 return "D{:d}d".format(major_Cn) if has_sigma_d else "D{:d}".format(major_Cn)
 
             # (Cn, Cnv, Cnh) for n > 3, Cni for odd i > 1, S4n for positive n
-            coords_operated = - coords_centered
+            coords_operated[:, :] = - coords_centered
             has_sym_center: bool = is_sym_okay()
-            if has_sym_center: return "C{:d}i".format(major_Cn) if major_Cn % 2 else "C{:d}h".format(major_Cn)
-            # Cnh for even n has been excluded now, odd n is still remained
-            if has_sigma_h:
-                if major_Cn % 2 == 0: raise RuntimeError("This should never happen.")
-                return "C{:d}h".format(major_Cn)
-
-            # (Cn, Cnv) for n > 3, S4n for positive n
-            # if there is S4n, there must be C2n
-            has_Sn: bool = False
-            S_order: int
-            for half_S_order_try in range(major_Cn, 0, -1):
-                if major_Cn % half_S_order_try != 0: continue
-                S_order_try: int = half_S_order_try * 2
-                rotate_around_x_by_n(S_order_try)
-                coords_operated[:, coord_x] = - coords_centered[:, coord_x]
-                if is_sym_okay():
-                    has_Sn = True
-                    S_order = S_order_try
-                    break
+            # S{4n+2} = C{2n+1} + i (C{2n+1}i), S{2n+1} = C{2n+1} + sigma_h (C{2n+1}h)
+            # if there is S4n, there must be C2n, and S4n does not contain i or sigma_h
+            if major_Cn % 2 != 0:
+                if has_sym_center and has_sigma_h: raise RuntimeError("This should never happen.")
+                if has_sym_center: return "C{:d}i".format(major_Cn)
+                if has_sigma_h: return "C{:d}h".format(major_Cn) # only odd Cnh here
             else:
-                has_Sn = False
-
-            if has_Sn:
-                if S_order % 4 != 0: raise RuntimeError("This should never happen.") # C{S_order/2}h
-                return "S{:d}".format(S_order)
+                if has_sigma_h:
+                    if not has_sym_center: raise RuntimeError("This should never happen.")
+                    return "C{:d}h".format(major_Cn) # only even Cnh here
+                # if major_Cn is n, then the maximum S, if any, must be S{2n} or Sn.
+                # if major_Cn is even, then if the maximum S is Sn, then:
+                # 1. if n = 4k, then S{4k} only has C{2k}, this is a paradox.
+                # 2. if n = 4k+2, then S{4k+2} = C{2k+1} + i, however C{4k+2} has C2, and C2 + i generates sigma_h, 
+                # but C{even} + sigma_h has been discussed above, hence here we only need to check S{2n}, and since 
+                # n is even here, that is a S{4m} point group if there is S{2n}.
+                S_order: int = major_Cn * 2
+                rotate_around_x_by_n(S_order)
+                coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+                has_Sn: bool = is_sym_okay()
+                if has_Sn:
+                    if S_order % 4 != 0: raise RuntimeError("This should never happen.")
+                    return "S{:d}".format(S_order)
 
             # Cn or Cnv for n > 3
             # find available sigma v
