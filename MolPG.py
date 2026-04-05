@@ -284,9 +284,9 @@ this class contains basic information of a xyz file.
             return "Dinfh" if sym_okay else "Cinfv"
 
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
-            # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherial-like"
+            # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherical-like"
             # T, Td, Th, O, Oh, I, Ih
-            print("spherial-like")
+            print("spherical-like")
 
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol or moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # symmetric, I_A = I_B \ne I_C or I_A \ne I_B = I_C
