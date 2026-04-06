@@ -13,7 +13,6 @@ import os, sys
 from scipy.spatial.distance import cdist
 import inspect, IPython
 # IPython.embed(header=f"Debug: at line {inspect.currentframe().f_lineno:d} of file {os.path.split(__file__)[-1]:s}:")
-# from functools import reduce
 
 ncoords: int = 3
 coord_x: int
@@ -286,7 +285,123 @@ this class contains basic information of a xyz file.
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherical-like"
             # T, Td, Th, O, Oh, I, Ih
-            print("spherical-like")
+            def rotate_half_around_axis(axis: np.array):
+                # assume axis is already normalized
+                # \cos\pi = -1, \sin\pi = 0
+                # R = \begin{bmatrix}
+                # \cos\theta + (1-\cos\theta){n_x}^2 & (1-\cos\theta)n_xn_y-\sin\theta n_z & (1-\cos\theta)n_xn_z+\sin\theta n_y \\
+                # (1-\cos\theta)n_yn_x+\sin\theta n_z & \cos\theta + (1-\cos\theta){n_y}^2 & (1-\cos\theta)n_yn_z-\sin\theta n_x \\
+                # (1-\cos\theta)n_zn_x-\sin\theta n_y & (1-\cos\theta)n_zn_y+\sin\theta n_x & \cos\theta + (1-\cos\theta){n_z}^2 \\
+                # \end{bmatrix}
+                rot_mat: np.ndarray = 2. * np.outer(axis, axis) - np.identity(ncoords, dtype=np.double)
+                coords_operated[:, :] = coords_centered @ rot_mat.T
+
+            def rotate_quarter_around_axis(axis: np.array):
+                # assume axis is already normalized
+                # \cos\frac\pi2 = 0, \sin\frac\pi2 = 1
+                cross_mat: np.ndarray = np.array([[0., - axis[coord_z], axis[coord_y]], 
+                                                  [axis[coord_z], 0., - axis[coord_x]], 
+                                                  [- axis[coord_y], axis[coord_x], 0.]], dtype=np.double)
+                rot_mat: np.ndarray = np.outer(axis, axis) + cross_mat
+                coords_operated[:, :] = coords_centered @ rot_mat.T
+
+            def flip_against_plane(normal_axis: np.array):
+                # assume normal_axis is already normalized
+                projection: np.ndarray = np.outer(coords_centered @ normal_axis, normal_axis)
+                coords_operated[:, :] = coords_centered - 2. * projection
+
+            # T series have 3 C2, O series have 6 individual C2 and 3 C4, I series have 15 C2
+            all_C2: np.ndarray = np.zeros((15, ncoords), dtype=np.double)
+            num_C2_found: int = 0
+
+            axis_point: np.ndarray
+            axis_point_norm: np.double
+            # first, check C2 through center of two SEAs
+            for SEA_group in SEAs:
+                if len(SEA_group) < 2: continue
+                for iatom in SEA_group:
+                    for jatom in SEA_group:
+                        if iatom >= jatom: continue
+                        axis_point = (coords_centered[iatom] + coords_centered[jatom]) / 2.
+                        axis_point_norm = np.linalg.norm(axis_point)
+                        if axis_point_norm  <= tol: continue
+                        axis_point /= axis_point_norm
+                        for C2_index in range(num_C2_found):
+                            if np.linalg.norm(axis_point - all_C2[C2_index]) <= tol or \
+                               np.linalg.norm(axis_point + all_C2[C2_index]) <= tol: break
+                        else:
+                            rotate_half_around_axis(axis_point)
+                            if is_sym_okay():
+                                if num_C2_found >= 15: raise RuntimeError("This should never happen.")
+                                all_C2[num_C2_found] = axis_point
+                                num_C2_found += 1
+
+            # second, check C2 through each atom
+            for iatom in range(self.natoms):
+                axis_point_norm = np.linalg.norm(coords_centered[iatom])
+                if axis_point_norm <= tol: continue
+                axis_point = coords_centered[iatom] / axis_point_norm
+                for C2_index in range(num_C2_found):
+                    if np.linalg.norm(axis_point - all_C2[C2_index]) <= tol or \
+                        np.linalg.norm(axis_point + all_C2[C2_index]) <= tol: break
+                else:
+                    rotate_half_around_axis(axis_point)
+                    if is_sym_okay():
+                        if num_C2_found >= 15: raise RuntimeError("This should never happen.")
+                        all_C2[num_C2_found] = axis_point
+                        num_C2_found += 1
+
+            if num_C2_found == 3:
+                # T, Td, Th
+                flip_against_plane(all_C2[0])
+                has_sigma_h: bool = is_sym_okay()
+                mirror_point = (all_C2[0] + all_C2[1]) / np.sqrt(2.)
+                flip_against_plane(mirror_point)
+                has_sigma_d: bool = is_sym_okay()
+                rot_mat = all_C2[:3].copy()
+                if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
+                coords_centered @= rot_mat.T
+                self.new_coordinates[:, :] = coords_centered
+                return "Th" if has_sigma_h else "Td" if has_sigma_d else "T"
+            elif num_C2_found == 9:
+                # O, Oh
+                C4_index: np.ndarray = np.zeros((3,), dtype=int)
+                num_C4_found: int = 0
+                for C2_index in range(9):
+                    rotate_quarter_around_axis(all_C2[C2_index])
+                    if is_sym_okay():
+                        C4_index[num_C4_found] = C2_index
+                        num_C4_found += 1
+                if num_C4_found != 3: raise RuntimeError("This should never happen.")
+                flip_against_plane(all_C2[C4_index[0]])
+                has_sigma_h: bool = is_sym_okay()
+                rot_mat = np.array([all_C2[C4_index[0]], all_C2[C4_index[1]], all_C2[C4_index[2]]], dtype=np.double)
+                if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
+                coords_centered @= rot_mat.T
+                self.new_coordinates[:, :] = coords_centered
+                return "Oh" if has_sigma_h else "O"
+            elif num_C2_found == 15:
+                # I, Ih
+                flip_against_plane(all_C2[0])
+                has_sigma_h: bool = is_sym_okay()
+                C2_use_index: np.ndarray = np.zeros((3,), dtype=int)
+                for C2_use_index[1] in range(1, 15):
+                    if np.abs(np.dot(all_C2[C2_use_index[1]], all_C2[0])) <= tol: break
+                else:
+                    raise RuntimeError("This should never happen.")
+                for C2_use_index[2] in range(1, 15):
+                    if C2_use_index[2] == C2_use_index[1]: continue
+                    if np.abs(np.dot(all_C2[C2_use_index[2]], all_C2[0])) <= tol and \
+                        np.abs(np.dot(all_C2[C2_use_index[2]], all_C2[C2_use_index[1]])) <= tol: break
+                else:
+                    raise RuntimeError("This should never happen.")
+                rot_mat = np.array([all_C2[C2_use_index[0]], all_C2[C2_use_index[1]], all_C2[C2_use_index[2]]], dtype=np.double)
+                if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
+                coords_centered @= rot_mat.T
+                self.new_coordinates[:, :] = coords_centered
+                return "Ih" if has_sigma_h else "I"
+            else:
+                raise RuntimeError("This should never happen.")
 
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol or moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # symmetric, I_A = I_B \ne I_C or I_A \ne I_B = I_C
@@ -334,13 +449,14 @@ this class contains basic information of a xyz file.
                 rotate_around_x_by_n(major_Cn)
                 if is_sym_okay(): break
             else:
-                raise RuntimeError("This should never happen.");
+                raise RuntimeError("This should never happen.")
 
             # find available C2
             has_minor_C2: bool = False
             axis_point: np.ndarray
             axis_point_norm: np.double
             coords_operated[:, coord_x] = - coords_centered[:, coord_x]
+            projection: np.ndarray
             # first, check centers of two SEAs
             for SEA_group in SEAs:
                 if len(SEA_group) < 2: continue
