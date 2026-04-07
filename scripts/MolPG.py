@@ -8,7 +8,7 @@ determine the point group of a molecule.
 It reads a structure from a xyz file.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 import numpy as np
 import os, sys
@@ -675,11 +675,16 @@ this class contains basic information of a xyz file.
 
 if __name__ == "__main__":
     argc = len(sys.argv)
-    if argc - 1 != 1:
-        raise ValueError(f"Usage: {sys.argv[0]:s} xxx.xyz")
+    if argc - 1 != 1 and argc - 1 != 2:
+        raise ValueError(f"Usage: {sys.argv[0]:s} xxx.xyz [tolerance]")
     molname = sys.argv[1]
     mol = Molecule(molname)
-    print(mol.detect_point_group())
+    if argc - 1 == 2:
+        tol = np.double(sys.argv[2])
+        result = mol.detect_point_group(tol)
+    else:
+        result = mol.detect_point_group()
+    print(result)
     # mol.use_new_coordinates()
     # mol.write_gjf("new.gjf")
 
