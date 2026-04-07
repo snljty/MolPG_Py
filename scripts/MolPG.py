@@ -1,4 +1,4 @@
-#! /usr/bin/env python3
+#!/usr/bin/env python3
 # -*- Coding: UTF-8 -*-
 
 r"""
@@ -7,6 +7,8 @@ determine the point group of a molecule.
 
 It reads a structure from a xyz file.
 """
+
+__version__ = "1.0.0"
 
 import numpy as np
 import os, sys
@@ -72,7 +74,6 @@ elements_average_weight = [None,
     276,          281,          280,          285, 
     284,          289,          288,          293, 
     294,          294]
-
 
 class Molecule(object):
     r"""
@@ -234,9 +235,6 @@ this class contains basic information of a xyz file.
                 touched[jatom] = True
                 SEAs[-1].append(jatom)
 
-        # print([[_ + 1 for _ in SEA_group] for SEA_group in SEAs])
-
-        # print(moments_of_inertia)
         coords_operated = coords_centered.copy()
 
         def is_sym_okay() -> bool:
