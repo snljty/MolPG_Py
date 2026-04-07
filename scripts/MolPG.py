@@ -11,7 +11,7 @@ It reads a structure from a xyz file.
 import numpy as np
 import os, sys
 from scipy.spatial.distance import cdist
-import inspect, IPython
+# import inspect, IPython
 # IPython.embed(header=f"Debug: at line {inspect.currentframe().f_lineno:d} of file {os.path.split(__file__)[-1]:s}:")
 
 ncoords: int = 3
