@@ -8,7 +8,7 @@ determine the point group of a molecule.
 It reads a structure from a xyz file.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 import numpy as np
 import os, sys
@@ -179,21 +179,22 @@ this class contains basic information of a xyz file.
     def use_new_coordinates(self):
         self.coordinates[:, :] = self.new_coordinates[:, :]
 
-    def detect_point_group(self, tol: np.double=1.E-4) -> str:
+    def detect_point_group(self, tol: np.double=1.E-4) -> tuple[str, int]:
+        # order 0 for infinity
         # quick return
         if not hasattr(self, "natoms") or not self.natoms:
             raise AttributeError("You should load a molecule first.")
         if self.natoms == 1:
             # spherical
             self.new_coordinates[:, :] = 0.
-            return "Kh"
+            return "Kh", 0
         elif self.natoms == 2:
             # 2-atoms linear, C_\mathrm{\infty v} or D_\mathrm{\infty h}
             self.new_coordinates[:, :] = 0.
             bond_length: np.double = np.linalg.norm(self.coordinates[1] - self.coordinates[0])
             self.new_coordinates[0, coord_x] = - bond_length / 2.
             self.new_coordinates[1, coord_x] = bond_length / 2.
-            return "Dinfh" if self.elements[0] == self.elements[1] else "Cinfv"
+            return ("Dinfh", 0) if self.elements[0] == self.elements[1] else ("Cinfv", 0)
         coords_centered = self.coordinates - self.coordinates.mean(axis=0)
 
         # get moments of inertia
@@ -263,7 +264,7 @@ this class contains basic information of a xyz file.
             # the molecule is on axis x
 
             # coords_operated[:, :] = - coords_centered
-            # return "Dinfh" if is_sym_okay() else "Cinfv"
+            # return ("Dinfh", 0) if is_sym_okay() else ("Cinfv", 0)
 
             for SEA_group in SEAs:
                 if len(SEA_group) == 2:
@@ -278,7 +279,7 @@ this class contains basic information of a xyz file.
                     raise RuntimeError("This should never happen.")
             else:
                 sym_okay = True
-            return "Dinfh" if sym_okay else "Cinfv"
+            return ("Dinfh", 0) if sym_okay else ("Cinfv", 0)
 
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherical-like"
@@ -309,6 +310,7 @@ this class contains basic information of a xyz file.
                 coords_operated[:, :] = coords_centered - 2. * projection
 
             def rotate_around_axis(axis: np.ndarray, order: int, times: int=1):
+                # assume axis is already normalized
                 theta = 2. * np.pi / np.double(order) * np.double(times)
                 cos_theta = np.cos(theta)
                 sin_theta = np.sin(theta)
@@ -388,7 +390,7 @@ this class contains basic information of a xyz file.
                 #
                 # 6 sigma_d             (Td): divides any two C2s,  contains the third C2
                 # 3 S4(1,3) = - I4(1,3) (Td): superposition with C2
-                return "Th" if has_sigma_h else "Td" if has_sigma_d else "T"
+                return ("Th", 24) if has_sigma_h else ("Td", 24) if has_sigma_d else ("T", 12)
 
             elif num_C2_found == 9:
                 # O, Oh
@@ -429,7 +431,7 @@ this class contains basic information of a xyz file.
                 # 4 S6(1,5) = I3(1,5) (Oh): superposition with C3
                 # 3 sigma_h           (Oh): perpendicular to C4
                 # 3 S4(1,3) = I4(1,3) (Oh): superposition with C4
-                return "Oh" if has_sigma_h else "O"
+                return ("Oh", 48) if has_sigma_h else ("O", 24)
 
             elif num_C2_found == 15:
                 # I, Ih
@@ -465,7 +467,7 @@ this class contains basic information of a xyz file.
                 # 6 S10(1,3,7,9) = I5(7,1,9,3) (Ih) : superposition with C5
                 # 10 S6(1,5) = I3(1,5)         (Ih) : superposition with C3
                 # 15 sigma                     (Ih) : perpendicular to C2
-                return "Ih" if has_sigma else "I"
+                return ("Ih", 120) if has_sigma else ("I", 60)
 
             else:
                 raise RuntimeError("This should never happen.")
@@ -566,8 +568,8 @@ this class contains basic information of a xyz file.
 
             if has_minor_C2:
                 # Dn (n > 2), Dnh (n > 2), Dnd (n >= 2)
-                if major_Cn == 2: return "D2d"
-                if has_sigma_h: return "D{:d}h".format(major_Cn)
+                if major_Cn == 2: return "D2d", 8
+                if has_sigma_h: return "D{:d}h".format(major_Cn), major_Cn * 4
                 # Dn, Dnd for n > 2
                 # if exists sigma_d, it divides two minor C2. one minor C2 is already on axis y.
                 coords_operated[:, coord_x] = coords_centered[:, coord_x]
@@ -576,21 +578,21 @@ this class contains basic information of a xyz file.
                 projection = (coords_centered[:, coord_y:] @ axis_point[:, np.newaxis]) * axis_point
                 coords_operated[:, coord_y:] = 2. * projection - coords_centered[:, coord_y:]
                 has_sigma_d: bool = is_sym_okay()
-                return "D{:d}d".format(major_Cn) if has_sigma_d else "D{:d}".format(major_Cn)
+                return ("D{:d}d".format(major_Cn), major_Cn * 4) if has_sigma_d else ("D{:d}".format(major_Cn), major_Cn * 2)
 
-            # (Cn, Cnv, Cnh) for n > 3, Cni for odd i > 1, S4n for positive n
+            # (Cn, Cnv, Cnh) for n > 2, Cni for odd i > 1, S4n for positive n
             coords_operated[:, :] = - coords_centered
             has_sym_center: bool = is_sym_okay()
             # S{4n+2} = C{2n+1} + i (C{2n+1}i), S{2n+1} = C{2n+1} + sigma_h (C{2n+1}h)
             # if there is S4n, there must be C2n, and S4n does not contain i or sigma_h
             if major_Cn % 2 != 0:
                 if has_sym_center and has_sigma_h: raise RuntimeError("This should never happen.")
-                if has_sym_center: return "C{:d}i".format(major_Cn)
-                if has_sigma_h: return "C{:d}h".format(major_Cn) # only odd Cnh here
+                if has_sym_center: return "C{:d}i".format(major_Cn), major_Cn * 2
+                if has_sigma_h: return "C{:d}h".format(major_Cn), major_Cn * 2 # only odd Cnh here
             else:
                 if has_sigma_h:
                     if not has_sym_center: raise RuntimeError("This should never happen.")
-                    return "C{:d}h".format(major_Cn) # only even Cnh here
+                    return "C{:d}h".format(major_Cn), major_Cn * 2 # only even Cnh here
                 # if major_Cn is n, then the maximum S, if any, must be S{2n} or Sn.
                 # if major_Cn is even, then if the maximum S is Sn, then:
                 # 1. if n = 4k, then S{4k} only has C{2k}, this is a paradox.
@@ -603,7 +605,7 @@ this class contains basic information of a xyz file.
                 has_Sn: bool = is_sym_okay()
                 if has_Sn:
                     if S_order % 4 != 0: raise RuntimeError("This should never happen.")
-                    return "S{:d}".format(S_order)
+                    return "S{:d}".format(S_order), S_order
 
             # Cn or Cnv for n > 3
             # find available sigma v
@@ -648,9 +650,9 @@ this class contains basic information of a xyz file.
                 rot_mat = np.array([[mirror_point[0], mirror_point[1]], [- mirror_point[1], mirror_point[0]]])
                 coords_centered[:, coord_y:] @= rot_mat.T
                 self.new_coordinates[:, :] = coords_centered[:, :]
-                return "C{:d}v".format(major_Cn)
+                return "C{:d}v".format(major_Cn), major_Cn * 2
             else:
-                return "C{:d}".format(major_Cn)
+                return "C{:d}".format(major_Cn), major_Cn
 
         else:
             # asymmetric, I_A \ne I_B \ne I_C
@@ -686,7 +688,7 @@ this class contains basic information of a xyz file.
                 coords_operated[:, coord_x] =   coords_centered[:, coord_x]
                 coords_operated[:, coord_z] = - coords_centered[:, coord_z]
                 has_xOy_mirror = is_sym_okay()
-                return "D2h" if has_xOy_mirror and has_yOz_mirror and has_zOx_mirror else "D2"
+                return ("D2h", 8) if has_xOy_mirror and has_yOz_mirror and has_zOx_mirror else ("D2", 4)
 
             # C2, C2h, C2v, C1, Ci, Cs
             # rotate the C2 axis to x axis
@@ -705,12 +707,12 @@ this class contains basic information of a xyz file.
                 coords_operated[:, coord_y] =   coords_centered[:, coord_y]
                 coords_operated[:, coord_z] =   coords_centered[:, coord_z]
                 has_yOz_mirror = is_sym_okay()
-                if has_yOz_mirror: return "C2h"
+                if has_yOz_mirror: return "C2h", 4
                 # C2, C2v
                 coords_operated[:, coord_x] =   coords_centered[:, coord_x]
                 coords_operated[:, coord_z] = - coords_centered[:, coord_z]
                 has_xOy_mirror = is_sym_okay()
-                return "C2v" if has_xOy_mirror else "C2"
+                return ("C2v", 4) if has_xOy_mirror else ("C2", 2)
 
             # C1, Ci, Cs
             coords_operated[:, coord_x] =   coords_centered[:, coord_x]
@@ -723,15 +725,15 @@ this class contains basic information of a xyz file.
             coords_operated[:, coord_x] =   coords_centered[:, coord_x]
             coords_operated[:, coord_z] = - coords_centered[:, coord_z]
             has_xOy_mirror = is_sym_okay()
-            if has_xOy_mirror or has_yOz_mirror or has_zOx_mirror: return "Cs"
+            if has_xOy_mirror or has_yOz_mirror or has_zOx_mirror: return "Cs", 2
 
             # C1, Ci
             coords_operated[:, coord_x] = - coords_centered[:, coord_x]
             coords_operated[:, coord_y] = - coords_centered[:, coord_y]
             has_sym_center = is_sym_okay()
-            return "Ci" if has_sym_center else "C1"
+            return ("Ci", 2) if has_sym_center else ("C1", 1)
 
-        return "undetected"
+        return "undetected", 1
 
 if __name__ == "__main__":
     argc = len(sys.argv)
@@ -741,10 +743,14 @@ if __name__ == "__main__":
     mol = Molecule(molname)
     if argc - 1 == 2:
         tol = np.double(sys.argv[2])
-        result = mol.detect_point_group(tol)
+        point_group, order = mol.detect_point_group(tol)
     else:
-        result = mol.detect_point_group()
-    print(result)
+        point_group, order = mol.detect_point_group()
+    print(point_group)
+    # if order:
+    #     print(f"order = {order:d}")
+    # else:
+    #     print(R"order = \infty")
     # mol.use_new_coordinates()
     # mol.write_gjf("new.gjf")
 
