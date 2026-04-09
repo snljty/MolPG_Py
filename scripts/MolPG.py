@@ -283,7 +283,7 @@ this class contains basic information of a xyz file.
         elif moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # more than one main-axes where n > 2, I_A = I_B = I_C, a.k.a. "spherical-like"
             # T, Td, Th, O, Oh, I, Ih
-            def rotate_half_around_axis(axis: np.array):
+            def rotate_half_around_axis(axis: np.ndarray):
                 # assume axis is already normalized
                 # \cos\pi = -1, \sin\pi = 0
                 # R = \begin{bmatrix}
@@ -294,7 +294,7 @@ this class contains basic information of a xyz file.
                 rot_mat: np.ndarray = 2. * np.outer(axis, axis) - np.identity(ncoords, dtype=np.double)
                 coords_operated[:, :] = coords_centered @ rot_mat.T
 
-            def rotate_quarter_around_axis(axis: np.array):
+            def rotate_quarter_around_axis(axis: np.ndarray):
                 # assume axis is already normalized
                 # \cos\frac\pi2 = 0, \sin\frac\pi2 = 1
                 cross_mat: np.ndarray = np.array([[0., - axis[coord_z], axis[coord_y]], 
@@ -303,10 +303,21 @@ this class contains basic information of a xyz file.
                 rot_mat: np.ndarray = np.outer(axis, axis) + cross_mat
                 coords_operated[:, :] = coords_centered @ rot_mat.T
 
-            def flip_against_plane(normal_axis: np.array):
+            def flip_against_plane(normal_axis: np.ndarray):
                 # assume normal_axis is already normalized
                 projection: np.ndarray = np.outer(coords_centered @ normal_axis, normal_axis)
                 coords_operated[:, :] = coords_centered - 2. * projection
+
+            def rotate_around_axis(axis: np.ndarray, order: int, times: int=1):
+                theta = 2. * np.pi / np.double(order) * np.double(times)
+                cos_theta = np.cos(theta)
+                sin_theta = np.sin(theta)
+                cross_mat: np.ndarray = np.array([[0., - axis[coord_z], axis[coord_y]], 
+                                                  [axis[coord_z], 0., - axis[coord_x]], 
+                                                  [- axis[coord_y], axis[coord_x], 0.]], dtype=np.double)
+                rot_mat: np.ndarray = np.identity(ncoords, dtype=np.double) + cross_mat * sin_theta + \
+                    (1. - cos_theta) * (np.outer(axis, axis) - np.identity(ncoords, dtype=np.double))
+                coords_operated[:, :] = coords_centered @ rot_mat.T
 
             # T series have 3 C2, O series have 6 individual C2 and 3 C4, I series have 15 C2
             all_C2: np.ndarray = np.zeros((15, ncoords), dtype=np.double)
@@ -356,11 +367,29 @@ this class contains basic information of a xyz file.
                 mirror_point = (all_C2[0] + all_C2[1]) / np.sqrt(2.)
                 flip_against_plane(mirror_point)
                 has_sigma_d: bool = is_sym_okay()
-                rot_mat = all_C2[:3].copy()
+                rot_mat: np.ndarray = all_C2[:3].copy()
                 if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
                 coords_centered @= rot_mat.T
                 self.new_coordinates[:, :] = coords_centered
+                # aligned coordinates:
+                # 3 C2(1):
+                #     [1, 0, 0]
+                #     [0, 1, 0]
+                #     [0, 0, 1]
+                # 4 C3(1,2):
+                #     [1,  1,  1] / sqrt(3)
+                #     [1,  1, -1] / sqrt(3)
+                #     [1, -1,  1] / sqrt(3)
+                #     [1, -1, -1] / sqrt(3)
+                #
+                # 1 i                  (Th)
+                # 3 sigma_h            (Th): perpendicular to C2
+                # 4 S6(1,5)= - I3(1,5) (Th): superposition with C3
+                #
+                # 6 sigma_d             (Td): divides any two C2s,  contains the third C2
+                # 3 S4(1,3) = - I4(1,3) (Td): superposition with C2
                 return "Th" if has_sigma_h else "Td" if has_sigma_d else "T"
+
             elif num_C2_found == 9:
                 # O, Oh
                 C4_index: np.ndarray = np.zeros((3,), dtype=int)
@@ -373,15 +402,39 @@ this class contains basic information of a xyz file.
                 if num_C4_found != 3: raise RuntimeError("This should never happen.")
                 flip_against_plane(all_C2[C4_index[0]])
                 has_sigma_h: bool = is_sym_okay()
-                rot_mat = np.array([all_C2[C4_index[0]], all_C2[C4_index[1]], all_C2[C4_index[2]]], dtype=np.double)
+                rot_mat: np.ndarray = np.array([all_C2[C4_index[0]], all_C2[C4_index[1]], all_C2[C4_index[2]]], dtype=np.double)
                 if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
                 coords_centered @= rot_mat.T
                 self.new_coordinates[:, :] = coords_centered
+                # aligned coordinates:
+                # 6 C2(1):
+                #     [ 0,  1,  1] / sqrt(2)
+                #     [ 0,  1, -1] / sqrt(2)
+                #     [ 1,  0,  1] / sqrt(2)
+                #     [-1,  0,  1] / sqrt(2)
+                #     [ 1,  1,  0] / sqrt(2)
+                #     [ 1, -1,  0] / sqrt(2)
+                # 4 C3(1,2):
+                #     [1,  1,  1] / sqrt(3)
+                #     [1,  1, -1] / sqrt(3)
+                #     [1, -1,  1] / sqrt(3)
+                #     [1, -1, -1] / sqrt(3)
+                # 3 C4(1,2,3) (C4(2) = C2(1), not the C2(1) above):
+                #     [1, 0, 0]
+                #     [0, 1, 0]
+                #     [0, 0, 1]
+                #
+                # 1 i                 (Oh)
+                # 6 sigma_d           (Oh): divides any two C4s, contains the third C4
+                # 4 S6(1,5) = I3(1,5) (Oh): superposition with C3
+                # 3 sigma_h           (Oh): perpendicular to C4
+                # 3 S4(1,3) = I4(1,3) (Oh): superposition with C4
                 return "Oh" if has_sigma_h else "O"
+
             elif num_C2_found == 15:
                 # I, Ih
                 flip_against_plane(all_C2[0])
-                has_sigma_h: bool = is_sym_okay()
+                has_sigma: bool = is_sym_okay()
                 C2_use_index: np.ndarray = np.zeros((3,), dtype=int)
                 for C2_use_index[1] in range(1, 15):
                     if np.abs(np.dot(all_C2[C2_use_index[1]], all_C2[0])) <= tol: break
@@ -393,11 +446,27 @@ this class contains basic information of a xyz file.
                         np.abs(np.dot(all_C2[C2_use_index[2]], all_C2[C2_use_index[1]])) <= tol: break
                 else:
                     raise RuntimeError("This should never happen.")
-                rot_mat = np.array([all_C2[C2_use_index[0]], all_C2[C2_use_index[1]], all_C2[C2_use_index[2]]], dtype=np.double)
+                rot_mat: np.ndarray = np.array([all_C2[C2_use_index[0]], all_C2[C2_use_index[1]], all_C2[C2_use_index[2]]], dtype=np.double)
                 if np.linalg.det(rot_mat) < 0.: rot_mat[coord_x] = - rot_mat[coord_x]
                 coords_centered @= rot_mat.T
                 self.new_coordinates[:, :] = coords_centered
-                return "Ih" if has_sigma_h else "I"
+                # for fullerene C60 (soccer-ball-like), there are 12 pentagons and 20 hexagons. 
+                # each pentagon has 5 hexagon neighbor, 
+                # each hexagon has alternate distributing three pentagons and three hexagons.
+                # each C5 passes through centers of two opposite pentagons.
+                # each C3 passes through centers of two opposite hexagons.
+                # each C2 passes through the midpoints of two opposite common edges between a hexagonal rings and its adjacent hexagonal rings.
+                # let \phi=\frac{\sqrt{5}+1}{2}, \varphi=\frac{\sqrt{5}-1}{2}
+                # aligned coordinates:
+                # 15 C2(1) : x, y, z axes, [1, \pm\phi, \pm\varphi] / 2 and their cyclic permutations
+                # 10 C3(1,2) : [1, \pm(1+\phi), 0] / sqrt(3\phi+3) and their cyclic permutations and [1, \pm1, \pm1] / sqrt(3)
+                # 6  C5(1,2,3,4) : [1, 0, \pm\phi] / sqrt(\phi+2) and theri cyclic permutations
+                # i                            (Ih)
+                # 6 S10(1,3,7,9) = I5(7,1,9,3) (Ih) : superposition with C5
+                # 10 S6(1,5) = I3(1,5)         (Ih) : superposition with C3
+                # 15 sigma                     (Ih) : perpendicular to C2
+                return "Ih" if has_sigma else "I"
+
             else:
                 raise RuntimeError("This should never happen.")
 
@@ -407,10 +476,7 @@ this class contains basic information of a xyz file.
 
             # rotate the principal axis corresponding to the unequivalent moment of inertia to x axis
             if moments_of_inertia[1] - moments_of_inertia[0] <= inertia_tol:
-                swp = - coords_centered[:, coord_x]
-                coords_centered[:, coord_x] = coords_centered[:, coord_z]
-                coords_centered[:, coord_z] = swp
-                del swp
+                coords_centered[:, coord_x], coords_centered[:, coord_z] = coords_centered[:, coord_z].copy(), - coords_centered[:, coord_x].copy()
 
             # detect the main axis n > 2
             # first find the maximum possible Cn axis
@@ -625,19 +691,13 @@ this class contains basic information of a xyz file.
             # C2, C2h, C2v, C1, Ci, Cs
             # rotate the C2 axis to x axis
             if has_z_C2:
-                swp = - coords_centered[:, coord_x]
-                coords_centered[:, coord_x] = coords_centered[:, coord_z]
-                coords_centered[:, coord_z] = swp
+                coords_centered[:, coord_x], coords_centered[:, coord_z] = coords_centered[:, coord_z].copy(), - coords_centered[:, coord_x].copy()
                 has_z_C2 = False
                 has_x_C2 = True
-                del swp
             elif has_y_C2:
-                swp = - coords_centered[:, coord_y]
-                coords_centered[:, coord_y] = coords_centered[:, coord_x]
-                coords_centered[:, coord_x] = swp
+                coords_centered[:, coord_x], coords_centered[:, coord_y] = - coords_centered[:, coord_y].copy(), coords_centered[:, coord_x].copy()
                 has_y_C2 = False
                 has_x_C2 = True
-                del swp
 
             if has_x_C2:
                 # C2, C2h, C2v
