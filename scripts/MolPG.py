@@ -8,7 +8,7 @@ determine the point group of a molecule.
 It reads a structure from a xyz file.
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 import numpy as np
 import os, sys
@@ -215,12 +215,14 @@ this class contains basic information of a xyz file.
             (np.dot(coords_centered[iatom], coords_centered[iatom]) * np.eye(3, dtype=np.double) - 
                 np.outer(coords_centered[iatom], coords_centered[iatom])) for iatom in range(self.natoms))
 
+        inertia_tol = tol * 2. * np.linalg.norm(coords_centered, axis=1) @ self.atomic_weights.T
         moments_of_inertia, principal_axes = np.linalg.eigh(moments_of_inertia_tensor)
         if np.linalg.det(principal_axes) < 0.: principal_axes[:, 0] = - principal_axes[:, 0]
-        coords_centered @= principal_axes # rotate principal axes to x y z
+        if (np.abs((moments_of_inertia_tensor - np.diag(np.diagonal(moments_of_inertia_tensor)))) > inertia_tol).any():
+            coords_centered @= principal_axes # rotate principal axes to x y z
         self.new_coordinates[:, :] = coords_centered[:, :]
 
-        # detect SEA
+        # detect SEA (symmetry equavalent atoms)
         atomic_numbers_to_compare = np.tile(self.atomic_numbers, (self.natoms, 1))
         distance_to_compare = cdist(coords_centered, coords_centered)
 
@@ -264,7 +266,6 @@ this class contains basic information of a xyz file.
                 sym_okay = True
             return sym_okay
 
-        inertia_tol = tol * 2. * np.linalg.norm(coords_centered, axis=1) @ self.atomic_weights.T
         if moments_of_inertia[0] <= inertia_tol and moments_of_inertia[2] - moments_of_inertia[1] <= inertia_tol:
             # linear, I_A = 0, I_B = I_C
             # print("linear")
@@ -307,6 +308,13 @@ this class contains basic information of a xyz file.
                 # (1-\cos\theta)n_yn_x+\sin\theta n_z & \cos\theta + (1-\cos\theta){n_y}^2 & (1-\cos\theta)n_yn_z-\sin\theta n_x \\
                 # (1-\cos\theta)n_zn_x-\sin\theta n_y & (1-\cos\theta)n_zn_y+\sin\theta n_x & \cos\theta + (1-\cos\theta){n_z}^2 \\
                 # \end{bmatrix}
+                # Rodrigues' rotation formula:
+                # R = I - K(n)\sin\theta + (1-\cos\theta)(nn^\top-I), where K(n) is the asymmetrical cross matrix:
+                # K(n) = \begin{bmatrix}
+                # 0 & - n_z & n_y \\
+                # n_z & 0 & - n_x \\
+                # - n_y & n_x & 0 \\
+                # \end{bmatrix}
                 rot_mat: np.ndarray = 2. * np.outer(axis, axis) - np.identity(ncoords, dtype=np.double)
                 coords_operated[:, :] = coords_centered @ rot_mat.T
 
@@ -321,8 +329,9 @@ this class contains basic information of a xyz file.
 
             def flip_against_plane(normal_axis: np.ndarray):
                 # assume normal_axis is already normalized
-                projection: np.ndarray = np.outer(coords_centered @ normal_axis, normal_axis)
-                coords_operated[:, :] = coords_centered - 2. * projection
+                # \sigma_"h" = i @ C2
+                flip_mat: np.ndarray = np.identity(ncoords, dtype=np.double) - 2. * np.outer(normal_axis, normal_axis)
+                coords_operated[:, :] = coords_centered @ flip_mat.T
 
             def rotate_around_axis(axis: np.ndarray, order: int, times: int=1):
                 # assume axis is already normalized
@@ -381,6 +390,7 @@ this class contains basic information of a xyz file.
                 # T, Td, Th
                 flip_against_plane(all_C2[0])
                 has_sigma_h: bool = is_sym_okay()
+                # since two C2 are orthogonal, if there is a \sigma_d divides them, there must be another perpendicular to that.
                 mirror_point = (all_C2[0] + all_C2[1]) / np.sqrt(2.)
                 flip_against_plane(mirror_point)
                 has_sigma_d: bool = is_sym_okay()
@@ -473,9 +483,9 @@ this class contains basic information of a xyz file.
                 # each C5 passes through centers of two opposite pentagons.
                 # each C3 passes through centers of two opposite hexagons.
                 # each C2 passes through the midpoints of two opposite common edges between a hexagonal rings and its adjacent hexagonal rings.
-                # let \phi=\frac{\sqrt{5}+1}{2}, \varphi=\frac{\sqrt{5}-1}{2}
+                # let \phi=\frac{\sqrt{5}+1}{2}
                 # aligned coordinates:
-                # 15 C2(1) : x, y, z axes, [1, \pm\phi, \pm\varphi] / 2 and their cyclic permutations
+                # 15 C2(1) : x, y, z axes, [1, \pm\phi, \pm(1-\phi)] / 2 and their cyclic permutations
                 # 10 C3(1,2) : [1, \pm(1+\phi), 0] / sqrt(3\phi+3) and their cyclic permutations and [1, \pm1, \pm1] / sqrt(3)
                 # 6  C5(1,2,3,4) : [1, 0, \pm\phi] / sqrt(\phi+2) and theri cyclic permutations
                 # i                            (Ih)
@@ -639,12 +649,10 @@ this class contains basic information of a xyz file.
                     # let g be the largest power of two that is a common devisor of n and k, 
                     # then if k/g is odd, i@Cn(k)=I{n/g}(k/g), otherwise I{n/g}(k/g+n/g)
                     return "C{:d}h".format(major_Cn), major_Cn * 2 # only even Cnh here
-                # if major_Cn is n, then the maximum S, if any, must be S{2n} or Sn.
-                # if major_Cn is even, then if the maximum S is Sn, then:
-                # 1. if n = 4k, then S{4k} only has C{2k}, this is a paradox.
-                # 2. if n = 4k+2, then S{4k+2} = C{2k+1} + i, however C{4k+2} has C2, and C2 + i generates sigma_h, 
-                # but C{even} + sigma_h has been discussed above, hence here we only need to check S{2n}, and since 
-                # n is even here, that is a S{4m} point group if there is S{2n}.
+                # if major_Cn is odd, then Sn(n)=\sigma_h, there must be \sigma_h
+                # if major_Cn is an odd multiple of two, then Sn(n/2)=\sigma_d@C2=i, there must be i
+                # in other words, if there is Sm but neigher \sigma_h nor i, m must be a multiple of 4, 
+                # and in this case the maximum rotation axis of Sm is C{m/2}, hence only needs to test C{2n}.
                 S_order: int = major_Cn * 2
                 rotate_around_x_by_n(S_order)
                 coords_operated[:, coord_x] = - coords_centered[:, coord_x]
